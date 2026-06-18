@@ -15,7 +15,6 @@ import io
 import os
 
 
-
 class CheckAudio(nn.Module):
     def __init__(self):
         super().__init__()
@@ -43,24 +42,36 @@ class CheckAudio(nn.Module):
 
 
 classes = ['blues', 'classical', 'country', 'disco', 'hiphop', 'jazz', 'metal', 'pop', 'reggae', 'rock']
-index_to_label = {label: ind for ind, label in enumerate(classes)}
-
+# Исправлено: теперь индекс -> метка
+index_to_label = {ind: label for ind, label in enumerate(classes)}
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 model = CheckAudio()
-model.load_state_dict(torch.load('audioGTZAN.pth', map_location=device))
+model.load_state_dict(torch.load('model_GTZAN_DatasetMusicGenreClassification.pth', map_location=device))
 model.to(device)
 model.eval()
 
 transform = T.MelSpectrogram(
-     sample_rate = 22050,
-     n_mels = 64
+    sample_rate=22050,
+    n_mels=64
 )
 
 max_len = 500
 
+
 def change_audio(waveform, sr):
+    # Преобразуем в torch tensor и добавляем канал, если нужно
+    if not isinstance(waveform, torch.Tensor):
+        waveform = torch.tensor(waveform, dtype=torch.float32)
+
+    # Если моно (1D) — делаем (1, time)
+    if waveform.dim() == 1:
+        waveform = waveform.unsqueeze(0)
+    # Если стерео — берём среднее (или первый канал)
+    elif waveform.dim() == 2 and waveform.shape[0] == 2:
+        waveform = waveform.mean(dim=0, keepdim=True)
+
     if sr != 22050:
         resample = T.Resample(orig_freq=sr, new_freq=22050)
         waveform = resample(waveform)
@@ -78,14 +89,16 @@ def change_audio(waveform, sr):
 
 app = FastAPI()
 
+
 @app.post('/predict')
-async def predict_audio(file:UploadFile = File(...)):
+async def predict_audio(file: UploadFile = File(...)):
     try:
         data = await file.read()
         if not data:
             raise HTTPException(status_code=400, detail='Пустой файл')
 
-        wf, sr = sf.read(io.BytesIO(data), dtype='float')
+        # Читаем аудио через soundfile
+        wf, sr = sf.read(io.BytesIO(data), dtype='float32')
         wf = torch.tensor(wf)
 
         spec = change_audio(wf, sr).unsqueeze(0).to(device)
@@ -94,14 +107,19 @@ async def predict_audio(file:UploadFile = File(...)):
             y_pred = model(spec)
             pred_ind = torch.argmax(y_pred, dim=1).item()
             pred_class = index_to_label[pred_ind]
-            return {f'Индекс: {pred_ind}, Жанр: {pred_class}'}
+
+            # Исправлено: возвращаем нормальный JSON
+            return {
+                "index": pred_ind,
+                "genre": pred_class
+            }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'{e}')
 
+
 if __name__ == '__main__':
     uvicorn.run(app, host='127.0.0.1', port=8000)
-
 
 # st.title('Audio Genre Classifier')
 # st.text('Загрузите аудио, и модель попробует её распознать.')
