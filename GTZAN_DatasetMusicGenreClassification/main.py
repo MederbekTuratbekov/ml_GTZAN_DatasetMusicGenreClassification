@@ -42,7 +42,6 @@ class CheckAudio(nn.Module):
 
 
 classes = ['blues', 'classical', 'country', 'disco', 'hiphop', 'jazz', 'metal', 'pop', 'reggae', 'rock']
-# Исправлено: теперь индекс -> метка
 index_to_label = {ind: label for ind, label in enumerate(classes)}
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -61,14 +60,12 @@ max_len = 500
 
 
 def change_audio(waveform, sr):
-    # Преобразуем в torch tensor и добавляем канал, если нужно
     if not isinstance(waveform, torch.Tensor):
         waveform = torch.tensor(waveform, dtype=torch.float32)
 
-    # Если моно (1D) — делаем (1, time)
     if waveform.dim() == 1:
         waveform = waveform.unsqueeze(0)
-    # Если стерео — берём среднее (или первый канал)
+
     elif waveform.dim() == 2 and waveform.shape[0] == 2:
         waveform = waveform.mean(dim=0, keepdim=True)
 
@@ -97,7 +94,6 @@ async def predict_audio(file: UploadFile = File(...)):
         if not data:
             raise HTTPException(status_code=400, detail='Пустой файл')
 
-        # Читаем аудио через soundfile
         wf, sr = sf.read(io.BytesIO(data), dtype='float32')
         wf = torch.tensor(wf)
 
@@ -108,7 +104,6 @@ async def predict_audio(file: UploadFile = File(...)):
             pred_ind = torch.argmax(y_pred, dim=1).item()
             pred_class = index_to_label[pred_ind]
 
-            # Исправлено: возвращаем нормальный JSON
             return {
                 "index": pred_ind,
                 "genre": pred_class
