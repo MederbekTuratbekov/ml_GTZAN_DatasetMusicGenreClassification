@@ -1,3 +1,4 @@
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from torchaudio import transforms as T
 import torch.nn.functional as F
@@ -15,48 +16,56 @@ import io
 import os
 
 
+BASE_DIR = Path(__file__).parent
+
+
+# ── Model ──────────────────────────────────────────────────────────────────────
+
 class CheckAudio(nn.Module):
     def __init__(self):
         super().__init__()
         self.first = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=3, padding=1),
+            nn.BatchNorm2d(16),
             nn.ReLU(),
             nn.MaxPool2d(2),
-            nn.Conv2d(16, 64, kernel_size=3, padding=1),
+
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(2),
+
             nn.AdaptiveAvgPool2d((8, 8))
         )
         self.second = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(64 * 8 * 8, 128),
+            nn.Linear(32 * 8 * 8, 128),
             nn.ReLU(),
+            nn.Dropout(0.5),
             nn.Linear(128, 10)
         )
 
     def forward(self, audio):
-        audio = audio.unsqueeze(1)
+        if audio.dim() == 3:
+            audio = audio.unsqueeze(1)
         audio = self.first(audio)
         audio = self.second(audio)
         return audio
 
 
-classes = ['blues', 'classical', 'country', 'disco', 'hiphop', 'jazz', 'metal', 'pop', 'reggae', 'rock']
-index_to_label = {ind: label for ind, label in enumerate(classes)}
-
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-model = CheckAudio()
-model.load_state_dict(torch.load('model_GTZAN_DatasetMusicGenreClassification.pth', map_location=device))
-model.to(device)
-model.eval()
+
+# ── Transform ──────────────────────────────────────────────────────────────────
 
 transform = T.MelSpectrogram(
     sample_rate=22050,
+    n_fft=2048,
+    hop_length=512,
     n_mels=64
 )
 
-max_len = 500
+max_len = 1280
 
 
 def change_audio(waveform, sr):
@@ -83,6 +92,19 @@ def change_audio(waveform, sr):
 
     return input_spectrogram
 
+
+# ── Load model ─────────────────────────────────────────────────────────────────
+
+classes = torch.load(BASE_DIR / 'labels_GTZAN_DatasetMusicGenreClassification.pth')
+index_to_label = {ind: label for ind, label in enumerate(classes)}
+
+model = CheckAudio()
+model.load_state_dict(torch.load(BASE_DIR / 'model_CheckAudio_GTZAN_DatasetMusicGenreClassification.pth', map_location=device))
+model.to(device)
+model.eval()
+
+
+# ── FastAPI ────────────────────────────────────────────────────────────────────
 
 app = FastAPI()
 
@@ -115,6 +137,9 @@ async def predict_audio(file: UploadFile = File(...)):
 
 if __name__ == '__main__':
     uvicorn.run(app, host='127.0.0.1', port=8000)
+
+
+# ── Streamlit ──────────────────────────────────────────────────────────────────
 
 # st.title('Audio Genre Classifier')
 # st.text('Загрузите аудио, и модель попробует её распознать.')
